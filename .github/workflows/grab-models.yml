@@ -1,0 +1,51 @@
+name: Grab 3D models
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Page URL to scan"
+        required: true
+      extensions:
+        description: "File types to look for (pipe-separated)"
+        required: false
+        default: "glb|gltf|fbx|obj|stl|usdz|usd|dae|3ds|3mf|ifc|ply|e57|las|laz|splat|ksplat|spz"
+      wait_seconds:
+        description: "Extra seconds to let the 3D viewer load"
+        required: false
+        default: "8"
+
+run-name: "Grab models: ${{ inputs.url }}"
+
+jobs:
+  grab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright + Chromium
+        run: |
+          npm init -y > /dev/null
+          npm install playwright@1 --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Scan page and download models
+        env:
+          TARGET_URL: ${{ inputs.url }}
+          EXTS: ${{ inputs.extensions }}
+          WAIT_SECONDS: ${{ inputs.wait_seconds }}
+        run: node scripts/grab.mjs
+
+      - name: Upload models
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: models
+          path: out/
+          if-no-files-found: warn
+          retention-days: 7
