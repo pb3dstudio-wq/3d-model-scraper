@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Model Grabber</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{--bg:#0f1218;--panel:#181d26;--line:#2a3140;--text:#e6e9ef;--mute:#8b93a7;--acc:#4da3ff;--ok:#3ecf8e;--bad:#ff6b6b;--warn:#ffb84d}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text)}
+  header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:12px}
+  header h1{margin:0;font-size:20px}
+  header span{color:var(--mute)}
+  main{max-width:1200px;margin:0 auto;padding:20px 24px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input[type=text],input[type=number],select,textarea{background:#0c0f14;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit}
+  input[type=text]{flex:1;min-width:280px}
+  textarea{width:100%;min-height:140px;font:12px Consolas,monospace}
+  button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:8px 14px;font:inherit;cursor:pointer;white-space:nowrap}
+  button.sec{background:#2a3140}
+  button.small{padding:4px 9px;font-size:12px}
+  button:disabled{opacity:.5;cursor:default}
+  .tabs{display:flex;gap:4px;margin-bottom:12px}
+  .tabs button{background:#232a36}
+  .tabs button.on{background:var(--acc)}
+  .exts{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;color:var(--mute)}
+  .exts label{cursor:pointer}
+  details{margin-top:10px;color:var(--mute)}
+  details .row{margin-top:8px}
+  .hint{color:var(--mute);font-size:12.5px;margin:8px 0 0}
+  code{background:#0c0f14;padding:1px 5px;border-radius:4px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{color:var(--mute);font-weight:600;font-size:12px;text-transform:uppercase}
+  td.name{word-break:break-all}
+  td.name small{color:var(--mute)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;background:#2a3140;font-size:11.5px;text-transform:uppercase}
+  .actions{display:flex;gap:4px;flex-wrap:wrap}
+  #log{font:12px Consolas,monospace;color:var(--mute);max-height:160px;overflow:auto;white-space:pre-wrap;margin:0}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  #previewWrap{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10;align-items:center;justify-content:center}
+  #previewBox{background:var(--panel);border:1px solid var(--line);border-radius:10px;width:min(900px,92vw);height:min(650px,85vh);display:flex;flex-direction:column}
+  #previewBox .bar{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+  #previewHost{flex:1}
+  model-viewer{width:100%;height:100%;background:#20252f}
+  .empty{color:var(--mute);text-align:center;padding:24px}
+</style>
+</head>
+<body>
+<header><h1>3D Model Grabber</h1><span>Find and download 3D model files referenced by a web page</span></header>
+<main>
+
+  <div class="panel">
+    <div class="tabs">
+      <button id="tabUrl" class="on">Scan a URL</button>
+      <button id="tabPaste">Paste source / HAR / URL list</button>
+    </div>
+
+    <!-- URL mode -->
+    <div id="modeUrl">
+      <div class="row">
+        <input type="text" id="url" placeholder="https://example.com/product-page">
+        <button id="ghBtn" style="background:#3ecf8e;color:#000">Run on GitHub</button>
+        <button id="scanBtn" class="sec">Scan in browser</button>
+      </div>
+      <details id="ghSettings">
+        <summary>GitHub settings (needed for "Run on GitHub")</summary>
+        <div class="row">
+          <input type="text" id="ghRepo" placeholder="your-username/model-grabber" style="min-width:220px;flex:0 1 260px">
+          <input type="password" id="ghToken" placeholder="Fine-grained token (Actions: read & write)" style="flex:1;min-width:260px">
+          <button class="sec small" id="ghSave">Save</button>
+        </div>
+        <p class="hint">Stored only in this browser (localStorage). Use a fine-grained token limited to this one repo with <b>Actions: Read and write</b>.</p>
+      </details>
+      <div id="ghStatus" class="hint"></div>
+      <div class="exts" id="exts"></div>
+      <details>
+        <summary>Options</summary>
+        <div class="row">
+          <label>Fetch route
+            <select id="proxyMode">
+              <option value="auto">Auto (direct, then proxies)</option>
+              <option value="local">Local helper (localhost:8787)</option>
+              <option value="direct">Direct only</option>
+              <option value="corsproxy">corsproxy.io</option>
+              <option value="allorigins">allorigins.win</option>
+              <option value="codetabs">codetabs.com</option>
+              <option value="custom">Custom proxy</option>
+            </select>
+          </label>
+          <input type="text" id="customProxy" placeholder="Custom proxy prefix, e.g. http://localhost:8080/?url=  (or use {url})">
+        </div>
+        <div class="row">
+          <label><input type="checkbox" id="deep" checked> Deep scan (also read the page's JavaScript, JSON and iframes)</label>
+          <label>Max extra files <input type="number" id="maxFetch" value="60" min="0" max="500" style="width:80px"></label>
+        </div>
+        <p class="hint">A page opened from your disk can't read other websites directly (browser CORS rules), so the tool falls back to a public CORS proxy. If your network blocks those, use the <b>Paste</b> tab instead.</p>
+      </details>
+    </div>
+
+    <!-- Paste mode -->
+    <div id="modeEdit" style="display:none">
+      <textarea id="pasteBox" placeholder="Paste any of these:
+ • Page source (Ctrl+U on the site, Ctrl+A, Ctrl+C)
+ • A HAR file's contents (DevTools > Network > right-click > Save all as HAR)
+ • A plain list of URLs (e.g. from the console snippet below)"></textarea>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="pasteBase" placeholder="Page URL (used to resolve relative links) – optional">
+        <button id="pasteScanBtn">Find models</button>
+        <label class="sec"><input type="file" id="harFile" accept=".har,.json,.html,.htm,.txt" style="display:none"><button class="sec" onclick="document.getElementById('harFile').click()">Load HAR / file…</button></label>
+      </div>
+      <details open>
+        <summary>Most reliable method: console snippet (catches models loaded by JavaScript)</summary>
+        <p class="hint">1. Open the target page and let the 3D viewer load. 2. Press <code>F12</code> → Console. 3. Paste the snippet and press Enter (Edge may ask you to type <code>allow pasting</code> first). 4. The model URLs are copied to your clipboard – paste them in the box above.</p>
+        <div class="row"><input type="text" id="snippet" readonly><button class="sec" id="copySnippet">Copy snippet</button></div>
+      </details>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div><strong>Local helper:</strong> <span id="helperStatus" class="warn">checking…</span></div>
+      <div class="row"><span class="hint" style="margin:0">No helper? Drag this to your favourites bar, then click it on the product page →</span>
+      <a id="bookmarklet" href="#" style="background:#3ecf8e;color:#000;padding:6px 12px;border-radius:6px;text-decoration:none;font-weight:600">Grab 3D models</a></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <strong id="count">No models yet</strong>
+        <label><input type="checkbox" id="selAll"> Select all</label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="gltfDeps" checked> Include .bin / textures for .gltf</label>
+        <button id="dlSel" disabled>Download selected</button>
+        <button class="sec" id="copyAll" disabled>Copy all URLs</button>
+        <button class="sec" id="clearBtn">Clear</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th style="width:30px"></th><th>File</th><th>Type</th><th>Found in</th><th style="width:250px">Actions</th></tr></thead>
+      <tbody id="results"><tr><td colspan="5" class="empty">Scan a page to list the 3D models it references.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel"><pre id="log"></pre></div>
+</main>
+
+<div id="previewWrap">
+  <div id="previewBox">
+    <div class="bar"><strong id="previewTitle">Preview</strong><button class="sec small" id="closePreview">Close</button></div>
+    <div id="previewHost"></div>
+  </div>
+</div>
+
+<script>
+/* ---------- config ---------- */
+const EXTS = {
+  'Models':      ['glb','gltf','fbx','obj','stl','usdz','usd','dae','3ds','3mf','ifc','step','stp'],
+  'Point cloud / splat': ['ply','e57','las','laz','splat','ksplat','spz']
+};
+const LOCAL_HELPER = location.protocol.startsWith('http') && location.port==='8787' ? location.origin : 'http://localhost:8787';
+const PROXIES = {
+  local:      u => LOCAL_HELPER + '/proxy?url=' + encodeURIComponent(u),
+  corsproxy:  u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  allorigins: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  codetabs:   u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+  custom:     u => { const p = $('customProxy').value.trim(); return p.includes('{url}') ? p.replace('{url}', encodeURIComponent(u)) : p + encodeURIComponent(u); }
+};
+const SKIP_HOSTS = /(googletagmanager|google-analytics|doubleclick|facebook|hotjar|cookiebot|usercentrics|consentmanager|clarity\.ms|linkedin|youtube|vimeo|recaptcha|gstatic|hubspot|matomo|onetrust)/i;
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const models = new Map();          // url -> {url, ext, name, sources:Set}
+let lastGoodRoute = null;
+
+function log(msg, cls=''){ const s=document.createElement('span'); if(cls) s.className=cls; s.textContent=msg+'\n'; $('log').appendChild(s); $('log').scrollTop=1e9; }
+function selectedExts(){ return [...document.querySelectorAll('#exts input:checked')].map(i=>i.value); }
+function extOf(u){ try{ const p=new URL(u).pathname.toLowerCase(); const m=p.match(/\.([a-z0-9]+)$/); return m?m[1]:''; }catch{ return ''; } }
+function fileName(u){ try{ const p=new URL(u).pathname; return decodeURIComponent(p.split('/').pop()||'model'); }catch{ return 'model'; } }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function shortSrc(u){ try{ const x=new URL(u); return x.host + (x.pathname.length>40? '…'+x.pathname.slice(-38) : x.pathname); }catch{ return u; } }
+
+function routes(){
+  const mode=$('proxyMode').value;
+  if(mode!=='auto') return [mode];
+  const all=['local','direct','corsproxy','allorigins','codetabs'];
+  if($('customProxy').value.trim()) all.push('custom');
+  return lastGoodRoute ? [lastGoodRoute, ...all.filter(r=>r!==lastGoodRoute)] : all;
+}
+
+async function fetchVia(url, as='text'){
+  let lastErr; const errs=[];
+  for(const r of routes()){
+    const target = r==='direct' ? url : PROXIES[r](url);
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(), 25000);
+    try{
+      const res=await fetch(target,{signal:ctl.signal});
+      clearTimeout(t);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data = as==='blob' ? await res.blob() : await res.text();
+      lastGoodRoute=r;
+      return {data, route:r};
+    }catch(e){ clearTimeout(t); lastErr=e; errs.push(r+': '+(e.name==='AbortError'?'timeout':e.message)); }
+  }
+  throw new Error(errs.join(' | ') || 'fetch failed');
+}
+
+/* ---------- extraction ---------- */
+function unescapeText(t){
+  return t.replace(/\\u002[fF]/g,'/').replace(/\\\//g,'/').replace(/&amp;/g,'&').replace(/&#x2F;/gi,'/').replace(/&quot;/g,'"');
+}
+
+function extractModels(text, base, source){
+  const exts=selectedExts(); if(!exts.length) return 0;
+  text=unescapeText(text);
+  const re=new RegExp(`[^\\s"'\`<>()\\\\,;{}\\[\\]|^=*]+\\.(?:${exts.join('|')})(?:\\?[^\\s"'\`<>()\\\\]*)?(?=["'\`\\s<>()\\\\,;#]|$)`,'gi');
+  let added=0, m;
+  while((m=re.exec(text))){
+    let tok=m[0];
+    const fname=tok.split('?')[0].split('/').pop();
+    if(!fname || fname.startsWith('.')) continue;          // e.g. ".glb" inside code
+    let abs; try{ abs=new URL(tok, base||undefined).href; }catch{ continue; }
+    if(!/^https?:/i.test(abs)) continue;
+    if(addModel(abs, source)) added++;
+  }
+  return added;
+}
+
+function addModel(url, source){
+  const ext=extOf(url)||'?';
+  if(models.has(url)){ models.get(url).sources.add(source); return false; }
+  models.set(url,{url, ext, name:fileName(url), sources:new Set([source])});
+  return true;
+}
+
+function findResources(text, base, isHtml){
+  const found=new Set();
+  if(isHtml){
+    const doc=new DOMParser().parseFromString(text,'text/html');
+    doc.querySelectorAll('script[src],link[href],iframe[src]').forEach(el=>{
+      const v=el.getAttribute('src')||el.getAttribute('href');
+      const rel=(el.getAttribute('rel')||'').toLowerCase();
+      if(el.tagName==='LINK' && !/preload|modulepreload|prefetch/.test(rel) && !/\.(js|mjs|json)(\?|$)/i.test(v)) return;
+      try{ found.add(new URL(v,base).href); }catch{}
+    });
+  }
+  const t=unescapeText(text);
+  const re=/["'`]((?:https?:)?[^"'`\s<>]*?\.(?:m?js|json)(?:\?[^"'`\s<>]*)?)["'`]/gi; let m;
+  while((m=re.exec(t))){ const v=m[1]; if(v.split('/').pop().startsWith('.')) continue; try{ found.add(new URL(v,base).href); }catch{} }
+  return [...found];
+}
+
+/* ---------- scanning ---------- */
+async function scanUrl(){
+  let url=$('url').value.trim();
+  if(!url) return;
+  if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  url=url.split('#')[0];
+  $('scanBtn').disabled=true;
+  log('Scanning '+url+' …');
+  try{
+    const {data:html, route}=await fetchVia(url);
+    log(`Page loaded (${(html.length/1024).toFixed(0)} KB via ${route})`,'ok');
+    const n=extractModels(html,url,'page HTML');
+    log(`Found ${n} model reference(s) in the page HTML`);
+    render();
+    if($('deep').checked) await deepScan(html,url);
+  }catch(e){
+    log('Could not load the page: '+e.message+'. Try another fetch route under Options, or use the Paste tab.','bad');
+  }finally{
+    $('scanBtn').disabled=false;
+    log(`Done – ${models.size} model(s) listed.`, models.size?'ok':'warn');
+    if(!models.size) log('Tip: many viewers load models with JavaScript at runtime. Use the console snippet on the Paste tab – it reads what the browser actually downloaded.','warn');
+  }
+}
+
+async function deepScan(html, pageUrl){
+  const pageHost=new URL(pageUrl).host;
+  const max=+$('maxFetch').value||0;
+  const queue=findResources(html,pageUrl,true).filter(u=>!SKIP_HOSTS.test(u));
+  const seen=new Set([pageUrl]); let done=0;
+  log(`Deep scan: ${queue.length} linked file(s) to check (max ${max})`);
+  while(queue.length && done<max){
+    const u=queue.shift(); if(seen.has(u)) continue; seen.add(u);
+    let host; try{ host=new URL(u).host; }catch{ continue; }
+    done++;
+    try{
+      const {data}=await fetchVia(u);
+      const isHtml=/<html|<!doctype/i.test(data.slice(0,500));
+      const n=extractModels(data,u,shortSrc(u));
+      if(n){ log(`  +${n} from ${shortSrc(u)}`,'ok'); render(); }
+      // follow further same-host chunks / iframes
+      if(host===pageHost) findResources(data,u,isHtml).forEach(x=>{ try{ if(new URL(x).host===pageHost && !seen.has(x)) queue.push(x); }catch{} });
+    }catch(e){ log(`  skipped ${shortSrc(u)} (${e.message})`); }
+  }
+  log(`Deep scan checked ${done} file(s).`);
+}
+
+function scanPasted(text){
+  const base=$('pasteBase').value.trim()||undefined;
+  let n=0;
+  try{
+    const j=JSON.parse(text);
+    if(j && j.log && Array.isArray(j.log.entries)){
+      const exts=selectedExts();
+      j.log.entries.forEach(e=>{
+        const u=e.request&&e.request.url; if(!u) return;
+        const mime=(e.response&&e.response.content&&e.response.content.mimeType)||'';
+        if(exts.includes(extOf(u)) || /^model\//i.test(mime)){ if(addModel(u,'HAR (network)')) n++; }
+      });
+      log(`HAR: ${j.log.entries.length} requests checked, ${n} model(s) found`,'ok');
+      render(); return;
+    }
+  }catch{}
+  n=extractModels(text,base,'pasted text');
+  log(`Pasted text: ${n} model reference(s) found`, n?'ok':'warn');
+  if(!n && !base) log('If the paste contains relative paths (e.g. /assets/x.glb), fill in the page URL and try again.','warn');
+  render();
+}
+
+/* ---------- downloading ---------- */
+function saveBlob(blob,name){
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),30000);
+}
+
+async function downloadModel(m){
+  log('Downloading '+m.name+' …');
+  try{
+    const {data,route}=await fetchVia(m.url,'blob');
+    saveBlob(data,m.name);
+    log(`  saved ${m.name} (${(data.size/1048576).toFixed(2)} MB via ${route})`,'ok');
+    if(m.ext==='gltf' && $('gltfDeps').checked) await downloadGltfDeps(data,m.url);
+  }catch(e){
+    log(`  could not fetch ${m.name} (${e.message}) – opening the direct link instead`,'warn');
+    window.open(m.url,'_blank');
+  }
+}
+
+async function downloadGltfDeps(blob, gltfUrl){
+  try{
+    const j=JSON.parse(await blob.text());
+    const uris=[...(j.buffers||[]),...(j.images||[])].map(x=>x.uri).filter(u=>u && !u.startsWith('data:'));
+    if(!uris.length) return;
+    log(`  .gltf references ${uris.length} external file(s) – downloading them too (keep them in the same folder)`);
+    for(const u of uris){
+      const abs=new URL(u,gltfUrl).href;
+      try{ const {data}=await fetchVia(abs,'blob'); saveBlob(data, decodeURIComponent(u.split('/').pop())); log('    saved '+u,'ok'); }
+      catch(e){ log('    failed '+u+' ('+e.message+')','bad'); }
+      await new Promise(r=>setTimeout(r,400));
+    }
+  }catch(e){ log('  could not read .gltf dependencies: '+e.message,'warn'); }
+}
+
+/* ---------- preview ---------- */
+let mvLoaded=false;
+function loadModelViewer(){
+  if(mvLoaded) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.type='module';
+    s.src='https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js';
+    s.onload=()=>{mvLoaded=true;res();}; s.onerror=()=>rej(new Error('could not load the model-viewer library (needs internet)'));
+    document.head.appendChild(s);
+  });
+}
+async function preview(m){
+  $('previewTitle').textContent=m.name; $('previewHost').innerHTML='<div class="empty">Loading…</div>';
+  $('previewWrap').style.display='flex';
+  try{
+    await loadModelViewer();
+    let src=m.url;
+    if(m.ext==='glb'){ const {data}=await fetchVia(m.url,'blob'); src=URL.createObjectURL(data); }
+    $('previewHost').innerHTML=`<model-viewer src="${esc(src)}" camera-controls auto-rotate shadow-intensity="1" exposure="1"></model-viewer>`;
+  }catch(e){ $('previewHost').innerHTML=`<div class="empty bad">Preview failed: ${esc(e.message)}</div>`; }
+}
+
+/* ---------- rendering ---------- */
+function render(){
+  const tb=$('results'); const list=[...models.values()];
+  $('count').textContent = list.length ? `${list.length} model file(s) found` : 'No models yet';
+  $('dlSel').disabled = $('copyAll').disabled = !list.length;
+  if(!list.length){ tb.innerHTML='<tr><td colspan="5" class="empty">Scan a page to list the 3D models it references.</td></tr>'; return; }
+  tb.innerHTML=list.map((m,i)=>`
+    <tr>
+      <td><input type="checkbox" class="pick" data-i="${i}"></td>
+      <td class="name">${esc(m.name)}<br><small>${esc(m.url)}</small></td>
+      <td><span class="tag">${esc(m.ext)}</span></td>
+      <td><small>${esc([...m.sources].slice(0,3).join(', '))}</small></td>
+      <td class="actions">
+        <button class="small" data-act="dl" data-i="${i}">Download</button>
+        ${m.ext==='glb'||m.ext==='gltf'?`<button class="small sec" data-act="pv" data-i="${i}">Preview</button>`:''}
+        <button class="small sec" data-act="cp" data-i="${i}">Copy URL</button>
+        <button class="small sec" data-act="op" data-i="${i}">Open</button>
+      </td>
+    </tr>`).join('');
+}
+
+/* ---------- local helper + bookmarklet ---------- */
+async function checkHelper(){
+  const el=$('helperStatus');
+  try{ const r=await fetch(LOCAL_HELPER+'/ping',{cache:'no-store'}); if(!r.ok) throw 0;
+    el.textContent='running ('+LOCAL_HELPER+') – scans will go through it'; el.className='ok'; lastGoodRoute='local';
+  }catch{ el.textContent='not used – use "Run on GitHub" or the bookmark button'; el.className='warn'; }
+}
+function __grab(EXTS){
+  const R=new RegExp('\\.('+EXTS+')(\\?[^"\'\\s<>]*)?$','i');
+  const F=new RegExp('[^\\s"\'`<>()\\\\,;{}\\[\\]|]+\\.('+EXTS+')(\\?[^\\s"\'`<>()\\\\]*)?(?=["\'`\\s<>()\\\\,;#]|$)','gi');
+  const S=new Set();
+  const add=u=>{try{const a=new URL(u.split('\\/').join('/'),location.href).href;if(/^https?:/.test(a)&&!a.split('?')[0].split('/').pop().startsWith('.'))S.add(a);}catch(e){}};
+  performance.getEntriesByType('resource').forEach(e=>{if(R.test(e.name.split('#')[0]))add(e.name);});
+  document.querySelectorAll('[src],[href],[data-src],[data-model]').forEach(e=>['src','href','data-src','data-model'].forEach(k=>{const v=e.getAttribute(k);if(v&&R.test(v.split('#')[0]))add(v);}));
+  (document.documentElement.outerHTML.split('\\/').join('/').match(F)||[]).forEach(add);
+  const old=document.getElementById('__mg');if(old)old.remove();
+  const d=document.createElement('div');d.id='__mg';
+  d.style.cssText='position:fixed;top:12px;right:12px;z-index:2147483647;background:#181d26;color:#e6e9ef;font:13px Segoe UI,sans-serif;padding:14px;border-radius:10px;max-width:560px;max-height:70vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.5)';
+  const L=[...S];
+  const h=document.createElement('div');h.innerHTML='<b>'+L.length+' 3D model(s) found</b> – URLs copied to clipboard<br><small style="color:#8b93a7">None? Let the 3D viewer finish loading, then click the bookmark again.</small>';
+  const c=document.createElement('button');c.textContent='✕';c.style.cssText='float:right;background:none;border:0;color:#8b93a7;cursor:pointer;font-size:15px';c.onclick=()=>d.remove();
+  d.append(c,h);
+  L.forEach(u=>{
+    const r=document.createElement('div');r.style.cssText='margin-top:8px;word-break:break-all';
+    const n=decodeURIComponent(u.split('?')[0].split('/').pop());
+    const b=document.createElement('button');b.textContent='Download';
+    b.style.cssText='margin-right:8px;background:#4da3ff;color:#fff;border:0;border-radius:5px;padding:3px 9px;cursor:pointer';
+    b.onclick=async()=>{try{const x=await fetch(u);if(!x.ok)throw 0;const bl=await x.blob();const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download=n;document.body.append(a);a.click();a.remove();}catch(e){window.open(u,'_blank');}};
+    const sm=document.createElement('div');sm.style.cssText='color:#8b93a7;font-size:11px';sm.textContent=u;
+    r.append(b,n,sm);d.append(r);
+  });
+  document.body.append(d);
+  try{navigator.clipboard.writeText(L.join('\n'));}catch(e){}
+}
+function buildBookmarklet(){
+  const exts=Object.values(EXTS).flat().join('|');
+  const code='('+__grab.toString()+')('+JSON.stringify(exts)+')';
+  $('bookmarklet').href='javascript:'+encodeURIComponent(code);
+  $('bookmarklet').onclick=e=>{e.preventDefault();log('Drag the green button to your favourites bar (Ctrl+Shift+B shows it), then click it while on the product page.','warn');};
+}
+
+/* ---------- GitHub Actions route ---------- */
+const GH_WORKFLOW='grab-models.yml';
+function ghCfg(){ return {repo:(localStorage.mg_repo||'').trim(), token:(localStorage.mg_token||'').trim()}; }
+async function gh(pathname, opts={}){
+  const {token}=ghCfg();
+  const r=await fetch('https://api.github.com'+pathname,{...opts,headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer '+token,'X-GitHub-Api-Version':'2022-11-28',...(opts.headers||{})}});
+  if(!r.ok) throw new Error('GitHub '+r.status+': '+(await r.text()).slice(0,200));
+  return r.status===204?null:r.json();
+}
+async function runOnGitHub(){
+  let url=$('url').value.trim(); if(!url) return;
+  if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  const {repo,token}=ghCfg();
+  if(!repo||!token){ $('ghSettings').open=true; log('Fill in GitHub settings first (repo + token), then Save.','warn'); return; }
+  const st=$('ghStatus'); $('ghBtn').disabled=true;
+  const since=new Date(Date.now()-5000).toISOString();
+  try{
+    await gh(`/repos/${repo}/actions/workflows/${GH_WORKFLOW}/dispatches`,{method:'POST',body:JSON.stringify({ref:'main',inputs:{url:url.split('#')[0],extensions:selectedExts().join('|')||'glb|gltf'}})});
+    log('GitHub run started for '+url,'ok'); st.textContent='Queued on GitHub…';
+    let run=null;
+    for(let i=0;i<20 && !run;i++){ await new Promise(r=>setTimeout(r,3000));
+      const j=await gh(`/repos/${repo}/actions/workflows/${GH_WORKFLOW}/runs?event=workflow_dispatch&created=${encodeURIComponent(">="+since)}&per_page=5`);
+      run=(j.workflow_runs||[])[0]; }
+    if(!run) throw new Error('could not find the run – check the Actions tab on GitHub');
+    st.innerHTML=`Running… <a href="${run.html_url}" target="_blank" style="color:var(--acc)">view run</a>`;
+    while(true){ await new Promise(r=>setTimeout(r,5000));
+      run=await gh(`/repos/${repo}/actions/runs/${run.id}`);
+      if(run.status==='completed') break;
+      st.innerHTML=`${run.status}… <a href="${run.html_url}" target="_blank" style="color:var(--acc)">view run</a>`; }
+    const arts=await gh(`/repos/${repo}/actions/runs/${run.id}/artifacts`);
+    const a=(arts.artifacts||[])[0];
+    const dl=a?`https://github.com/${repo}/actions/runs/${run.id}/artifacts/${a.id}`:run.html_url;
+    st.innerHTML=`<b class="${run.conclusion==='success'?'ok':'bad'}">${run.conclusion}</b> – `+
+      (a?`<a href="${dl}" target="_blank" style="color:var(--acc)">Download models.zip (${(a.size_in_bytes/1048576).toFixed(1)} MB)</a> · `:'')+
+      `<a href="${run.html_url}" target="_blank" style="color:var(--acc)">see the list of files found</a>`;
+    log('GitHub run '+run.conclusion+(a?' – zip ready':''), run.conclusion==='success'?'ok':'bad');
+  }catch(e){ st.textContent=''; log(e.message,'bad'); }
+  finally{ $('ghBtn').disabled=false; }
+}
+
+/* ---------- wiring ---------- */
+(function init(){
+  const box=$('exts');
+  for(const [grp,list] of Object.entries(EXTS)){
+    box.insertAdjacentHTML('beforeend',`<strong style="color:var(--text)">${grp}:</strong>`);
+    list.forEach(e=>box.insertAdjacentHTML('beforeend',`<label><input type="checkbox" value="${e}" checked> .${e}</label>`));
+  }
+  const allExts=Object.values(EXTS).flat().join('|');
+  $('snippet').value=`(()=>{const r=/\\.(${allExts})(\\?|#|$)/i;const u=[...new Set([...performance.getEntriesByType('resource').map(e=>e.name),...[...document.querySelectorAll('[src],[href]')].map(e=>e.src||e.href)])].filter(x=>r.test(x));copy(location.href+'\\n'+u.join('\\n'));console.log(u.length+' model URL(s) copied to clipboard',u)})()`;
+
+  checkHelper(); buildBookmarklet();
+  $('ghRepo').value=localStorage.mg_repo||''; $('ghToken').value=localStorage.mg_token||'';
+  $('ghSave').onclick=()=>{ localStorage.mg_repo=$('ghRepo').value.trim(); localStorage.mg_token=$('ghToken').value.trim(); log('GitHub settings saved in this browser.','ok'); };
+  $('ghBtn').onclick=runOnGitHub;
+  $('tabUrl').onclick=()=>{ $('modeUrl').style.display=''; $('modeEdit').style.display='none'; $('tabUrl').classList.add('on'); $('tabPaste').classList.remove('on'); };
+  $('tabPaste').onclick=()=>{ $('modeUrl').style.display='none'; $('modeEdit').style.display=''; $('tabPaste').classList.add('on'); $('tabUrl').classList.remove('on'); };
+  $('scanBtn').onclick=scanUrl;
+  $('url').addEventListener('keydown',e=>{ if(e.key==='Enter') scanUrl(); });
+  $('pasteScanBtn').onclick=()=>scanPasted($('pasteBox').value);
+  $('harFile').onchange=async e=>{ const f=e.target.files[0]; if(f){ const t=await f.text(); log('Loaded file '+f.name); scanPasted(t); } e.target.value=''; };
+  $('copySnippet').onclick=()=>{ navigator.clipboard.writeText($('snippet').value); log('Console snippet copied.','ok'); };
+  $('selAll').onchange=e=>document.querySelectorAll('.pick').forEach(c=>c.checked=e.target.checked);
+  $('clearBtn').onclick=()=>{ models.clear(); render(); $('log').textContent=''; };
+  $('copyAll').onclick=()=>{ navigator.clipboard.writeText([...models.keys()].join('\n')); log('All URLs copied.','ok'); };
+  $('dlSel').onclick=async()=>{
+    const list=[...models.values()]; const picks=[...document.querySelectorAll('.pick:checked')].map(c=>list[+c.dataset.i]);
+    if(!picks.length){ log('Tick at least one model first.','warn'); return; }
+    $('dlSel').disabled=true;
+    for(const m of picks){ await downloadModel(m); await new Promise(r=>setTimeout(r,500)); }
+    $('dlSel').disabled=false;
+  };
+  $('results').onclick=e=>{
+    const b=e.target.closest('button[data-act]'); if(!b) return;
+    const m=[...models.values()][+b.dataset.i];
+    if(b.dataset.act==='dl') downloadModel(m);
+    if(b.dataset.act==='pv') preview(m);
+    if(b.dataset.act==='cp'){ navigator.clipboard.writeText(m.url); log('Copied '+m.url,'ok'); }
+    if(b.dataset.act==='op') window.open(m.url,'_blank');
+  };
+  $('closePreview').onclick=()=>{ $('previewWrap').style.display='none'; $('previewHost').innerHTML=''; };
+  // When the console-snippet output is pasted, the first line is the page URL – use it as base
+  $('pasteBox').addEventListener('input',()=>{ const first=$('pasteBox').value.split('\n')[0].trim(); if(!$('pasteBase').value && /^https?:\/\/\S+$/.test(first) && !selectedExts().includes(extOf(first))) $('pasteBase').value=first; });
+})();
+</script>
+</body>
+</html>
